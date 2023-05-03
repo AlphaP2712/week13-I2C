@@ -33,7 +33,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define EEPROM_ADDR 0b10100000
-#define IOEXPD_ADDR 0b01000000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,32 +42,28 @@
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef hdma_i2c1_rx;
+DMA_HandleTypeDef hdma_i2c1_tx;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 uint8_t eepromExampleWriteFlag = 0;
 uint8_t eepromExampleReadFlag = 0;
-uint8_t IOExpdrExampleWriteFlag = 0;
-uint8_t IOExpdrExampleReadFlag = 0;
 uint8_t eepromDataReadBack[4];
-uint8_t IOExpdrDataReadBack;
-uint8_t IOExpdrDataWrite = 0b01010101;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 void EEPROMWriteExample();
 void EEPROMReadExample(uint8_t *Rdata, uint16_t len);
 
-void IOExpenderInit();
-void IOExpenderReadPinA(uint8_t *Rdata);
-void IOExpenderWritePinB(uint8_t Wdata);
 
 /* USER CODE END PFP */
 
@@ -105,11 +100,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   HAL_Delay(100);
-  IOExpenderInit();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -118,8 +113,6 @@ int main(void)
 		EEPROMWriteExample();
 		EEPROMReadExample(eepromDataReadBack, 4);
 
-		IOExpenderReadPinA(&IOExpdrDataReadBack);
-		IOExpenderWritePinB(IOExpdrDataWrite);
 
     /* USER CODE END WHILE */
 
@@ -141,6 +134,7 @@ void SystemClock_Config(void)
   */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
@@ -149,14 +143,15 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 16;
-  RCC_OscInitStruct.PLL.PLLN = 336;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 100;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
+
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
@@ -166,7 +161,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -240,6 +235,25 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -247,6 +261,8 @@ static void MX_USART2_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -270,6 +286,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -293,29 +311,45 @@ void EEPROMReadExample(uint8_t *Rdata, uint16_t len) {
 		eepromExampleReadFlag = 0;
 	}
 }
-void IOExpenderInit() {
-	//Init All
-	static uint8_t Setting[0x16] = { 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00 };
-	HAL_I2C_Mem_Write(&hi2c1, IOEXPD_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT, Setting,
-			0x16, 100);
-}
-void IOExpenderReadPinA(uint8_t *Rdata) {
-	if (IOExpdrExampleReadFlag && hi2c1.State == HAL_I2C_STATE_READY) {
-		HAL_I2C_Mem_Read_IT(&hi2c1, IOEXPD_ADDR, 0x12, I2C_MEMADD_SIZE_8BIT,
-				Rdata, 1);
-		IOExpdrExampleReadFlag =0;
+void ReadEEPROMSeq(uint16_t MemAddr,uint8_t *Rdata,uint16_t len,uint8_t *Trigger)
+{
+	static enum
+	{
+		State_Idle,
+		State_address_frame,
+		State_dataFrame,
+	} State = State_Idle;
+	if(hi2c1.State == HAL_I2C_STATE_READY)
+	{
+		switch(State)
+		{
+		case State_Idle:
+			if(*Trigger)
+			{
+				State = State_address_frame;
+			}
+			break;
+		case State_address_frame:
+		{
+			static uint8_t MemoryAddress[2];
+			MemoryAddress[0] = (MemAddr>>8) & 0xFF;
+			MemoryAddress[1] = (MemAddr) & 0xFF;
+			HAL_I2C_Master_Seq_Transmit_IT(&hi2c1, EEPROM_ADDR, MemoryAddress, 2, I2C_FIRST_AND_NEXT_FRAME);
+			State = State_dataFrame;
+		}
+
+		break;
+
+		case State_dataFrame:
+			HAL_I2C_Master_Seq_Receive_IT(&hi2c1, EEPROM_ADDR, Rdata, len, I2C_LAST_FRAME);
+
+			State = State_Idle;
+
+			break;
+
+		}
 	}
-}
-void IOExpenderWritePinB(uint8_t Wdata) {
-	if (IOExpdrExampleWriteFlag && hi2c1.State == HAL_I2C_STATE_READY) {
-		static uint8_t data;
-		data = Wdata;
-		HAL_I2C_Mem_Write_IT(&hi2c1, IOEXPD_ADDR, 0x15, I2C_MEMADD_SIZE_8BIT,
-				&data, 1);
-		IOExpdrExampleWriteFlag=0;
-	}
+
 }
 /* USER CODE END 4 */
 
@@ -349,5 +383,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
